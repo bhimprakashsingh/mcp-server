@@ -1,6 +1,5 @@
 import os from 'node:os';
 import { z } from 'zod';
-import { authorize, type AuthUser } from './auth.js';
 import type { Note, SystemInfo, WeatherData } from './types.js';
 
 // In-memory store for notes
@@ -42,7 +41,7 @@ export function getAllNotes(): Note[] {
 export const toolDefinitions = [
   {
     name: 'calculate',
-    description: 'Perform mathematical operations including add, subtract, multiply, divide, power, and sqrt. (Permissions: tools:calculate)',
+    description: 'Perform mathematical operations including add, subtract, multiply, divide, power, and sqrt.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -65,20 +64,20 @@ export const toolDefinitions = [
   },
   {
     name: 'get_system_info',
-    description: 'Retrieve real-time host operating system information and telemetry. (Permissions: tools:get_system_info)',
+    description: 'Retrieve real-time host operating system information and telemetry.',
     inputSchema: {
       type: 'object',
       properties: {
         detailed: {
           type: 'boolean',
-          description: 'Include detailed CPU core models (Requires admin or tools:get_system_info:detailed)',
+          description: 'Include detailed CPU core models (admin only)',
         },
       },
     },
   },
   {
     name: 'manage_notes',
-    description: 'Create, read, list, or delete notes. (Permissions: create/read/list require user/admin; delete requires admin)',
+    description: 'Create, read, list, or delete notes in the server storage.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -105,7 +104,7 @@ export const toolDefinitions = [
   },
   {
     name: 'weather_report',
-    description: 'Get current weather conditions and forecast for a specified city. (Permissions: tools:weather_report)',
+    description: 'Get current weather conditions and forecast for a specified city.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -145,20 +144,20 @@ const WeatherArgsSchema = z.object({
   unit: z.enum(['celsius', 'fahrenheit']).default('celsius'),
 });
 
+/**
+ * Pure business-logic tool handler — no auth checks here.
+ * Authorization is enforced by the middleware before this is called.
+ *
+ * @param callerName - optional display name of the authenticated caller
+ */
 export async function handleCallTool(
   name: string,
   args: Record<string, unknown> | undefined,
-  authUser?: AuthUser
+  callerName?: string
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   try {
     switch (name) {
       case 'calculate': {
-        // Authorization check
-        const authz = authorize(authUser, 'tools:calculate');
-        if (!authz.allowed) {
-          return { content: [{ type: 'text', text: authz.reason! }], isError: true };
-        }
-
         const { operation, a, b } = CalculateArgsSchema.parse(args);
         let result: number;
         switch (operation) {
@@ -201,28 +200,7 @@ export async function handleCallTool(
       }
 
       case 'get_system_info': {
-        // Authorization check
-        const authz = authorize(authUser, 'tools:get_system_info');
-        if (!authz.allowed) {
-          return { content: [{ type: 'text', text: authz.reason! }], isError: true };
-        }
-
         const detailed = Boolean(args?.detailed);
-        if (detailed) {
-          const detailAuthz = authorize(authUser, 'tools:get_system_info:detailed');
-          if (!detailAuthz.allowed && authUser?.role !== 'admin') {
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: `Forbidden: Detailed hardware CPU telemetry requires administrator privileges.`,
-                },
-              ],
-              isError: true,
-            };
-          }
-        }
-
         const sysInfo = getSystemDiagnostics();
         const payload: Record<string, unknown> = { ...sysInfo };
         if (detailed) {
@@ -243,21 +221,6 @@ export async function handleCallTool(
 
       case 'manage_notes': {
         const parsed = NotesArgsSchema.parse(args);
-
-        // Action-specific Authorization checks
-        const actionPermission = `tools:manage_notes:${parsed.action}`;
-        const authz = authorize(authUser, actionPermission);
-        if (!authz.allowed) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: authz.reason || `Forbidden: Action '${parsed.action}' on notes is not permitted for your role.`,
-              },
-            ],
-            isError: true,
-          };
-        }
 
         switch (parsed.action) {
           case 'list': {
@@ -288,7 +251,7 @@ export async function handleCallTool(
               content: [
                 {
                   type: 'text',
-                  text: JSON.stringify({ status: 'created', note: newNote, createdBy: authUser?.username }, null, 2),
+                  text: JSON.stringify({ status: 'created', note: newNote, createdBy: callerName }, null, 2),
                 },
               ],
             };
@@ -314,7 +277,7 @@ export async function handleCallTool(
               content: [
                 {
                   type: 'text',
-                  text: JSON.stringify({ status: 'deleted', id: parsed.id, deletedBy: authUser?.username }, null, 2),
+                  text: JSON.stringify({ status: 'deleted', id: parsed.id, deletedBy: callerName }, null, 2),
                 },
               ],
             };
@@ -324,11 +287,6 @@ export async function handleCallTool(
       }
 
       case 'weather_report': {
-        const authz = authorize(authUser, 'tools:weather_report');
-        if (!authz.allowed) {
-          return { content: [{ type: 'text', text: authz.reason! }], isError: true };
-        }
-
         const { city, unit } = WeatherArgsSchema.parse(args);
         let hash = 0;
         for (let i = 0; i < city.length; i++) {

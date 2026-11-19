@@ -1,10 +1,10 @@
-import { authorize, type AuthUser } from './auth.js';
+import type { AuthUser } from './auth.js';
 import { getAllNotes, getSystemDiagnostics } from './tools.js';
 
 export const promptDefinitions = [
   {
     name: 'system_diagnostics',
-    description: 'Generates a prompt for an LLM to evaluate server hardware health and memory pressure. (Requires prompts:system_diagnostics)',
+    description: 'Generates a prompt for an LLM to evaluate server hardware health and memory pressure.',
     arguments: [
       {
         name: 'focus',
@@ -15,7 +15,7 @@ export const promptDefinitions = [
   },
   {
     name: 'summarize_notes',
-    description: 'Generates a prompt containing current stored notes and requests an action-item summary. (Requires prompts:summarize_notes)',
+    description: 'Generates a prompt containing current stored notes and requests an action-item summary.',
     arguments: [
       {
         name: 'tone',
@@ -26,6 +26,10 @@ export const promptDefinitions = [
   },
 ];
 
+/**
+ * Pure business-logic prompt handler — no auth checks here.
+ * Authorization is enforced by the middleware before this is called.
+ */
 export async function handleGetPrompt(
   name: string,
   args?: Record<string, string>,
@@ -37,13 +41,6 @@ export async function handleGetPrompt(
     content: { type: 'text'; text: string };
   }>;
 }> {
-  // Authorization check
-  const requiredPermission = `prompts:${name}`;
-  const authz = authorize(authUser, requiredPermission);
-  if (!authz.allowed) {
-    throw new Error(authz.reason || `Forbidden: Access to prompt template '${name}' denied.`);
-  }
-
   switch (name) {
     case 'system_diagnostics': {
       const focus = args?.focus ?? 'general';

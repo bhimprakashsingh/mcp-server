@@ -9,6 +9,17 @@ export class HostAgent {
   }
 
   /**
+   * Safely parse JSON or return raw text if error or plain text.
+   */
+  private parseToolResponse(text: string): Record<string, unknown> {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { raw: text };
+    }
+  }
+
+  /**
    * Execute a user goal or natural-language query using available MCP tools.
    */
   async execute(query: string): Promise<AgentResponse> {
@@ -46,7 +57,12 @@ export class HostAgent {
 
       const result = await this.host.callTool('calculate', { operation, a, b });
       const rawText = result.content[0]?.text ?? '{}';
-      const parsed = JSON.parse(rawText);
+      if (result.isError) {
+        steps[0].toolResult = { error: rawText };
+        return { query, steps, answer: `⚠️ ${rawText}` };
+      }
+
+      const parsed = this.parseToolResponse(rawText);
       steps[0].toolResult = parsed;
 
       return {
@@ -69,7 +85,12 @@ export class HostAgent {
 
       const result = await this.host.callTool('calculate', { operation: 'sqrt', a });
       const rawText = result.content[0]?.text ?? '{}';
-      const parsed = JSON.parse(rawText);
+      if (result.isError) {
+        steps[0].toolResult = { error: rawText };
+        return { query, steps, answer: `⚠️ ${rawText}` };
+      }
+
+      const parsed = this.parseToolResponse(rawText);
       steps[0].toolResult = parsed;
 
       return {
@@ -94,7 +115,12 @@ export class HostAgent {
 
       const result = await this.host.callTool('weather_report', { city, unit: 'celsius' });
       const rawText = result.content[0]?.text ?? '{}';
-      const weather = JSON.parse(rawText);
+      if (result.isError) {
+        steps[0].toolResult = { error: rawText };
+        return { query, steps, answer: `⚠️ ${rawText}` };
+      }
+
+      const weather = this.parseToolResponse(rawText) as Record<string, unknown>;
       steps[0].toolResult = weather;
 
       return {
@@ -123,13 +149,19 @@ export class HostAgent {
 
       const result = await this.host.callTool('get_system_info', { detailed: true });
       const rawText = result.content[0]?.text ?? '{}';
-      const sys = JSON.parse(rawText);
+      if (result.isError) {
+        steps[0].toolResult = { error: rawText };
+        return { query, steps, answer: `⚠️ ${rawText}` };
+      }
+
+      const sys = this.parseToolResponse(rawText) as Record<string, unknown>;
       steps[0].toolResult = sys;
 
+      const uptimeMinutes = typeof sys.uptimeSeconds === 'number' ? Math.floor(sys.uptimeSeconds / 60) : 0;
       return {
         query,
         steps,
-        answer: `**System Diagnostics Summary:**\n- **OS:** ${sys.platform} (${sys.arch}, release ${sys.release})\n- **CPU Cores:** ${sys.cpuCount}\n- **Memory:** ${sys.usedMemoryMB} MB used / ${sys.totalMemoryMB} MB total (${sys.freeMemoryMB} MB free)\n- **Host Uptime:** ${Math.floor(sys.uptimeSeconds / 60)} minutes\n- **Node Version:** ${sys.nodeVersion}`,
+        answer: `**System Diagnostics Summary:**\n- **OS:** ${sys.platform} (${sys.arch}, release ${sys.release})\n- **CPU Cores:** ${sys.cpuCount}\n- **Memory:** ${sys.usedMemoryMB} MB used / ${sys.totalMemoryMB} MB total (${sys.freeMemoryMB} MB free)\n- **Host Uptime:** ${uptimeMinutes} minutes\n- **Node Version:** ${sys.nodeVersion}`,
       };
     }
 
@@ -152,7 +184,13 @@ export class HostAgent {
         });
 
         const result = await this.host.callTool('manage_notes', { action: 'create', title, content });
-        const parsed = JSON.parse(result.content[0]?.text ?? '{}');
+        const rawText = result.content[0]?.text ?? '{}';
+        if (result.isError) {
+          steps[0].toolResult = { error: rawText };
+          return { query, steps, answer: `⚠️ ${rawText}` };
+        }
+
+        const parsed = this.parseToolResponse(rawText) as { note?: { id: string } };
         steps[0].toolResult = parsed;
 
         return {
@@ -172,11 +210,20 @@ export class HostAgent {
         });
 
         const result = await this.host.callTool('manage_notes', { action: 'list' });
-        const parsed = JSON.parse(result.content[0]?.text ?? '{}');
+        const rawText = result.content[0]?.text ?? '{}';
+        if (result.isError) {
+          steps[0].toolResult = { error: rawText };
+          return { query, steps, answer: `⚠️ ${rawText}` };
+        }
+
+        const parsed = this.parseToolResponse(rawText) as {
+          total?: number;
+          notes?: Array<{ id: string; title: string; content: string }>;
+        };
         steps[0].toolResult = parsed;
 
         const noteSummaries = (parsed.notes || [])
-          .map((n: { id: string; title: string; content: string }) => `- **${n.title}** (\`${n.id}\`): ${n.content}`)
+          .map((n) => `- **${n.title}** (\`${n.id}\`): ${n.content}`)
           .join('\n');
 
         return {
@@ -196,7 +243,7 @@ export class HostAgent {
           thought: 'No direct tool mapping found for query. Suggesting available capabilities.',
         },
       ],
-      answer: `I could not determine a specific tool for: "${query}". Try asking:\n- "Calculate 15 * 34"\n- "What is the square root of 144?"\n- "What's the weather in London?"\n- "Show system information"\n- "Create note 'TODO' with 'Review MCP host'"` ,
+      answer: `I could not determine a specific tool for: "${query}". Try asking:\n- "Calculate 15 * 34"\n- "What is the square root of 144?"\n- "What's the weather in London?"\n- "Show system information"\n- "Create note 'TODO' with 'Review MCP host'"`,
     };
   }
 }

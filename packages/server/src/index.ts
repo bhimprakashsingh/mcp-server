@@ -15,11 +15,13 @@ import {
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
+import type { AuthUser } from './auth.js';
 import {
-  authenticateToken,
-  extractTokenFromRequest,
-  type AuthUser,
-} from './auth.js';
+  AuthMiddleware,
+  AuthorizationError,
+  createStdioAuthMiddleware,
+  httpAuthMiddleware,
+} from './middleware.js';
 import { handleGetPrompt, promptDefinitions } from './prompts.js';
 import { handleReadResource, resourceDefinitions } from './resources.js';
 import { handleCallTool, toolDefinitions } from './tools.js';
@@ -29,7 +31,13 @@ const currentDir = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(currentDir, '../../../.env') });
 dotenv.config();
 
-export function createServer(authUser?: AuthUser): Server {
+/**
+ * Create and wire an MCP Server instance with centralized auth middleware.
+ *
+ * The middleware enforces authorization *before* any handler runs,
+ * so tools/resources/prompts stay pure business logic.
+ */
+export function createServer(authMw: AuthMiddleware): Server {
   const server = new Server(
     {
       name: 'mcp-demo-server',
@@ -44,39 +52,63 @@ export function createServer(authUser?: AuthUser): Server {
     }
   );
 
-  // 1. Tool handlers with authorization
+  const authUser = authMw.getUser();
+
+  // ── Tool handlers ───────────────────────────────────────────
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return { tools: toolDefinitions };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    return handleCallTool(request.params.name, request.params.arguments, authUser);
+    const { name, arguments: args } = request.params;
+
+    // Middleware: enforce authorization before the handler runs
+    const check = authMw.check('tool', name, (args as Record<string, unknown>) ?? {});
+    if (!check.allowed) {
+      return {
+        content: [{ type: 'text' as const, text: check.reason! }],
+        isError: true,
+      };
+    }
+
+    return handleCallTool(name, args, authUser?.username);
   });
 
-  // 2. Resource handlers with authorization
+  // ── Resource handlers ───────────────────────────────────────
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
     return { resources: resourceDefinitions };
   });
 
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-    return handleReadResource(request.params.uri, authUser);
+    const { uri } = request.params;
+
+    // Middleware: enforce authorization
+    authMw.enforce('resource', uri);
+
+    return handleReadResource(uri, authUser);
   });
 
-  // 3. Prompt handlers with authorization
+  // ── Prompt handlers ─────────────────────────────────────────
   server.setRequestHandler(ListPromptsRequestSchema, async () => {
     return { prompts: promptDefinitions };
   });
 
   server.setRequestHandler(GetPromptRequestSchema, async (request) => {
-    return handleGetPrompt(request.params.name, request.params.arguments, authUser);
+    const { name, arguments: args } = request.params;
+
+    // Middleware: enforce authorization
+    authMw.enforce('prompt', name);
+
+    return handleGetPrompt(name, args, authUser);
   });
 
   return server;
 }
 
-/**
- * Start Server using HTTP SSE Transport with Authentication & Authorization.
- */
+// ═══════════════════════════════════════════════════════════════
+//  HTTP Server with Authentication Middleware
+// ═══════════════════════════════════════════════════════════════
+
 export async function startHttpServer(port: number = 3001): Promise<http.Server> {
   const sessions = new Map<
     string,
@@ -84,7 +116,7 @@ export async function startHttpServer(port: number = 3001): Promise<http.Server>
   >();
 
   const httpServer = http.createServer(async (req, res) => {
-    // CORS headers
+    // ── CORS middleware ──
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key');
@@ -97,7 +129,7 @@ export async function startHttpServer(port: number = 3001): Promise<http.Server>
     const host = req.headers.host ?? `localhost:${port}`;
     const url = new URL(req.url ?? '/', `http://${host}`);
 
-    // Health check endpoint (Public)
+    // ── Health endpoint (public, no auth) ──
     if (url.pathname === '/' || url.pathname === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(
         JSON.stringify({
@@ -116,41 +148,27 @@ export async function startHttpServer(port: number = 3001): Promise<http.Server>
       return;
     }
 
-    // SSE Connection endpoint (Authentication required)
+    // ── SSE endpoint (auth middleware gate) ──
     if (url.pathname === '/sse' && req.method === 'GET') {
-      const token = extractTokenFromRequest(req);
-      const authResult = authenticateToken(token);
-
-      if (!authResult.authenticated || !authResult.user) {
-        console.warn(`[mcp-server:auth] 401 Unauthorized SSE connection attempt from ${req.socket.remoteAddress}. Error: ${authResult.error}`);
-        res.writeHead(401, {
-          'Content-Type': 'application/json',
-          'WWW-Authenticate': 'Bearer realm="mcp-server"',
-        }).end(
-          JSON.stringify({
-            error: 'Unauthorized',
-            message: authResult.error || 'Valid authentication token required.',
-          })
-        );
-        return;
+      // Run the HTTP auth middleware — returns false if 401 was sent
+      const authedReq = req as typeof req & {
+        authMiddleware?: AuthMiddleware;
+      };
+      if (!httpAuthMiddleware(authedReq, res)) {
+        return; // 401 already sent
       }
 
-      console.log(
-        `[mcp-server:auth] ✓ Authenticated SSE client: ${authResult.user.username} (Role: ${authResult.user.role})`
-      );
+      const authMw = authedReq.authMiddleware!;
+      const user = authMw.getUser()!;
 
-      const serverInstance = createServer(authResult.user);
+      const serverInstance = createServer(authMw);
       const transport = new SSEServerTransport('/message', res);
       const sessionId = transport.sessionId;
 
-      sessions.set(sessionId, {
-        server: serverInstance,
-        transport,
-        user: authResult.user,
-      });
+      sessions.set(sessionId, { server: serverInstance, transport, user });
 
       transport.onclose = () => {
-        console.log(`[mcp-server:http] Session ${sessionId} (${authResult.user?.username}) closed`);
+        console.log(`[mcp-server:http] Session ${sessionId} (${user.username}) closed`);
         sessions.delete(sessionId);
       };
 
@@ -158,7 +176,7 @@ export async function startHttpServer(port: number = 3001): Promise<http.Server>
       return;
     }
 
-    // POST Message endpoint
+    // ── Message endpoint (session-scoped, auth already established) ──
     if (url.pathname === '/message' && req.method === 'POST') {
       const sessionId = url.searchParams.get('sessionId');
       const session = sessionId
@@ -167,7 +185,9 @@ export async function startHttpServer(port: number = 3001): Promise<http.Server>
 
       if (!session) {
         res.writeHead(404, { 'Content-Type': 'application/json' }).end(
-          JSON.stringify({ error: `Session not found or expired. Active sessions: ${sessions.size}` })
+          JSON.stringify({
+            error: `Session not found or expired. Active sessions: ${sessions.size}`,
+          })
         );
         return;
       }
@@ -182,25 +202,25 @@ export async function startHttpServer(port: number = 3001): Promise<http.Server>
   return new Promise((resolve) => {
     httpServer.listen(port, () => {
       console.log('='.repeat(65));
-      console.log(`[mcp-server] Server running in HTTP SSE mode with Authentication`);
+      console.log(`[mcp-server] Server running in HTTP SSE mode`);
+      console.log(`[mcp-server] Auth middleware: enabled (Bearer / x-api-key / ?token=)`);
       console.log(`[mcp-server] SSE Endpoint:  http://localhost:${port}/sse`);
-      console.log(`[mcp-server] Health Check: http://localhost:${port}/health`);
-      console.log(`[mcp-server] Auth: Bearer Token / x-api-key / ?token=...`);
+      console.log(`[mcp-server] Health Check:  http://localhost:${port}/health`);
       console.log('='.repeat(65));
       resolve(httpServer);
     });
   });
 }
 
-/**
- * Start Server using standard I/O (Stdio) Transport with Auth Context.
- */
-export async function startStdioServer(): Promise<void> {
-  const token = process.env.MCP_AUTH_TOKEN || process.env.MCP_ADMIN_TOKEN || 'admin-token-secret-123';
-  const auth = authenticateToken(token);
-  const authUser = auth.authenticated ? auth.user : undefined;
+// ═══════════════════════════════════════════════════════════════
+//  Stdio Server with Auth Middleware (env-based token)
+// ═══════════════════════════════════════════════════════════════
 
-  const server = createServer(authUser);
+export async function startStdioServer(): Promise<void> {
+  const authMw = createStdioAuthMiddleware();
+  const authUser = authMw.getUser();
+
+  const server = createServer(authMw);
   const transport = new StdioServerTransport();
 
   process.on('SIGINT', async () => {
@@ -217,13 +237,14 @@ export async function startStdioServer(): Promise<void> {
 
   await server.connect(transport);
   console.error(
-    `[mcp-server] Server started on stdio transport (User: ${authUser?.username ?? 'Anonymous'}, Role: ${authUser?.role ?? 'none'})`
+    `[mcp-server] Server started on stdio (User: ${authUser?.username ?? 'Anonymous'}, Role: ${authUser?.role ?? 'none'})`
   );
 }
 
-/**
- * Main launcher checking .env and CLI arguments.
- */
+// ═══════════════════════════════════════════════════════════════
+//  Entrypoint
+// ═══════════════════════════════════════════════════════════════
+
 export async function main() {
   const useHttp =
     process.argv.includes('--http') ||

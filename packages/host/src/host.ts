@@ -17,8 +17,8 @@ export class McpHost {
   constructor(defaultAuthToken?: string) {
     // Resolve server target from .env or mcp-config.json file (no hardcoded path!)
     const target = resolveServerTarget();
-    const token = 'guest-token-secret-789';
-    defaultAuthToken ??
+    const token =
+      defaultAuthToken ??
       process.env.MCP_AUTH_TOKEN ??
       process.env.MCP_ADMIN_TOKEN ??
       'admin-token-secret-123';

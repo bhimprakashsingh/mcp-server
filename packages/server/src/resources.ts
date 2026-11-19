@@ -1,38 +1,35 @@
-import { authorize, type AuthUser } from './auth.js';
+import type { AuthUser } from './auth.js';
 import { getAllNotes, getSystemDiagnostics } from './tools.js';
 
 export const resourceDefinitions = [
   {
     uri: 'system://info',
     name: 'Live System Diagnostics',
-    description: 'Real-time CPU, memory, OS, and process performance snapshot. (Requires resources:system://info)',
+    description: 'Real-time CPU, memory, OS, and process performance snapshot.',
     mimeType: 'application/json',
   },
   {
     uri: 'notes://all',
     name: 'All Notes Database',
-    description: 'Current collection of saved notes formatted as a JSON array. (Requires resources:notes://all)',
+    description: 'Current collection of saved notes formatted as a JSON array.',
     mimeType: 'application/json',
   },
   {
     uri: 'config://server',
     name: 'Server Configuration',
-    description: 'Server identification, protocol details, and security policies. (Admin only - Requires resources:config://server)',
+    description: 'Server identification, protocol details, and security policies. (Admin only)',
     mimeType: 'application/json',
   },
 ];
 
+/**
+ * Pure business-logic resource handler — no auth checks here.
+ * Authorization is enforced by the middleware before this is called.
+ */
 export async function handleReadResource(
   uri: string,
   authUser?: AuthUser
 ): Promise<{ contents: Array<{ uri: string; mimeType: string; text: string }> }> {
-  // Authorization check
-  const requiredPermission = `resources:${uri}`;
-  const authz = authorize(authUser, requiredPermission);
-  if (!authz.allowed) {
-    throw new Error(authz.reason || `Forbidden: Access to resource '${uri}' denied.`);
-  }
-
   switch (uri) {
     case 'system://info': {
       const diagnostics = getSystemDiagnostics();
