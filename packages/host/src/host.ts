@@ -14,15 +14,21 @@ export class McpHost {
   private promptRegistry = new Map<string, UnifiedPrompt>();
   private isRunning = false;
 
-  constructor() {
+  constructor(defaultAuthToken?: string) {
     // Resolve server target from .env or mcp-config.json file (no hardcoded path!)
     const target = resolveServerTarget();
+    const token = 'guest-token-secret-789';
+    defaultAuthToken ??
+      process.env.MCP_AUTH_TOKEN ??
+      process.env.MCP_ADMIN_TOKEN ??
+      'admin-token-secret-123';
 
     if (target.transportType === 'http') {
       this.registerServer({
         id: 'core-server',
         name: 'MCP Core Server (HTTP)',
         url: target.url,
+        authToken: token,
       });
     } else {
       this.registerServer({
@@ -31,6 +37,7 @@ export class McpHost {
         path: target.path,
         command: target.command,
         args: target.args,
+        authToken: token,
       });
     }
   }
@@ -58,6 +65,7 @@ export class McpHost {
         serverPath: config.path,
         serverCommand: config.command,
         serverArgs: config.args,
+        authToken: config.authToken,
         serverCwd: config.cwd,
         serverEnv: config.env,
       });

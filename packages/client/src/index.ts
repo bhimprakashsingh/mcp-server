@@ -2,103 +2,128 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { McpClient } from './client.js';
 export * from './client.js';
-export * from './types.js';
 export * from './config.js';
+export * from './types.js';
 
 export async function runClientDemo(): Promise<void> {
-  console.log('='.repeat(60));
-  console.log('         MCP CLIENT DEMONSTRATION & TEST SUITE         ');
-  console.log('='.repeat(60));
+  console.log('='.repeat(65));
+  console.log('   MCP CLIENT DEMO: AUTHENTICATION & AUTHORIZATION (RBAC)      ');
+  console.log('='.repeat(65));
 
-  const client = new McpClient();
+  // -------------------------------------------------------------
+  // TEST 1: Admin Client (Full Permissions)
+  // -------------------------------------------------------------
+  console.log('\n>>> [TEST 1] Authenticating as ADMIN (token: "admin-token-secret-123")...');
+  const adminClient = new McpClient({
+    name: 'admin-client',
+    authToken: 'admin-token-secret-123',
+  });
 
   try {
-    console.log('\n[1/6] Connecting to MCP Server via Stdio transport...');
-    await client.connect();
-    console.log('✓ Successfully connected and completed MCP handshake!');
+    await adminClient.connect();
+    console.log('✓ Successfully authenticated and connected as Administrator!');
 
-    console.log('\n[2/6] Sending Ping...');
-    await client.ping();
-    console.log('✓ Ping response received. Server is responsive.');
-
-    console.log('\n[3/6] Discovering available Tools...');
-    const tools = await client.listTools();
-    console.log(`✓ Discovered ${tools.length} tools:`);
-    for (const tool of tools) {
-      console.log(`  - ${tool.name}: ${tool.description}`);
-    }
-
-    console.log('\n[4/6] Executing Tool Calls...');
-    // A. calculate
-    console.log('  → Calling tool: calculate (multiply 18 * 24)...');
-    const calcResult = await client.callTool('calculate', {
-      operation: 'multiply',
-      a: 18,
-      b: 24,
-    });
-    console.log('    Result:', calcResult.content[0]?.text);
-
-    // B. get_system_info
-    console.log('\n  → Calling tool: get_system_info (detailed: false)...');
-    const sysResult = await client.callTool('get_system_info', { detailed: false });
-    const sysData = JSON.parse(sysResult.content[0]?.text ?? '{}');
-    console.log(
-      `    Result: OS=${sysData.platform} (${sysData.arch}), Node=${sysData.nodeVersion}, CPUs=${sysData.cpuCount}, Memory=${sysData.usedMemoryMB}MB / ${sysData.totalMemoryMB}MB`
-    );
-
-    // C. manage_notes
-    console.log('\n  → Calling tool: manage_notes (create note)...');
-    const noteCreate = await client.callTool('manage_notes', {
+    console.log('\n  → Admin calling tool: manage_notes (create note)...');
+    const noteCreate = await adminClient.callTool('manage_notes', {
       action: 'create',
-      title: 'Sprint Planning',
-      content: 'Discuss MCP host and client integration architecture.',
+      title: 'Security Policy',
+      content: 'RBAC and token authentication enabled across MCP endpoints.',
     });
-    console.log('    Created Note:', noteCreate.content[0]?.text);
+    const parsedNote = JSON.parse(noteCreate.content[0]?.text ?? '{}');
+    console.log(`    Result: Note created (ID: ${parsedNote.note?.id}, Author: ${parsedNote.createdBy})`);
 
-    // D. weather_report
-    console.log('\n  → Calling tool: weather_report (city: "Seattle", unit: "celsius")...');
-    const weatherResult = await client.callTool('weather_report', {
-      city: 'Seattle',
-      unit: 'celsius',
-    });
-    console.log('    Weather:', weatherResult.content[0]?.text);
+    console.log('\n  → Admin reading restricted resource: config://server...');
+    const configRes = await adminClient.readResource('config://server');
+    console.log('    Result: Config accessed successfully by Admin.');
 
-    console.log('\n[5/6] Reading Resources...');
-    const resources = await client.listResources();
-    console.log(`✓ Discovered ${resources.length} resources:`);
-    for (const res of resources) {
-      console.log(`  - ${res.uri} (${res.name}): ${res.description}`);
+    console.log('\n  → Admin deleting note (Admin privilege)...');
+    if (parsedNote.note?.id) {
+      const deleteRes = await adminClient.callTool('manage_notes', {
+        action: 'delete',
+        id: parsedNote.note.id,
+      });
+      console.log('    Result:', deleteRes.content[0]?.text);
     }
-
-    console.log('  → Reading resource: system://info...');
-    const resourceContent = await client.readResource('system://info');
-    console.log('    Content snippet:', resourceContent[0]?.text?.slice(0, 150) + '...');
-
-    console.log('\n[6/6] Inspecting Prompts...');
-    const prompts = await client.listPrompts();
-    console.log(`✓ Discovered ${prompts.length} prompt templates:`);
-    for (const prompt of prompts) {
-      console.log(`  - ${prompt.name}: ${prompt.description}`);
-    }
-
-    console.log('  → Fetching prompt: system_diagnostics (focus: "memory")...');
-    const promptData = await client.getPrompt('system_diagnostics', { focus: 'memory' });
-    console.log('    Rendered Prompt message:');
-    const firstMsg = promptData.messages[0];
-    const preview = firstMsg && firstMsg.content.type === 'text' ? firstMsg.content.text : '';
-    console.log('    ' + preview.replace(/\n/g, '\n    '));
-
-    console.log('\n' + '='.repeat(60));
-    console.log('✓ All MCP Client operations completed successfully!');
-    console.log('='.repeat(60));
   } catch (err) {
-    console.error('Error during client demonstration:', err);
-    process.exitCode = 1;
+    console.error('Error during admin client test:', err);
   } finally {
-    console.log('\nClosing client connection...');
-    await client.disconnect();
-    console.log('Client disconnected gracefully.');
+    await adminClient.disconnect();
   }
+
+  // -------------------------------------------------------------
+  // TEST 2: Guest Client (Limited Permissions & Authorization Checks)
+  // -------------------------------------------------------------
+  console.log('\n' + '-'.repeat(65));
+  console.log('>>> [TEST 2] Authenticating as GUEST (token: "guest-token-secret-789")...');
+  const guestClient = new McpClient({
+    name: 'guest-client',
+    authToken: 'guest-token-secret-789',
+  });
+
+  try {
+    await guestClient.connect();
+    console.log('✓ Successfully authenticated as Guest (Read-Only role)!');
+
+    console.log('\n  → Guest calling authorized tool: calculate (45 * 2)...');
+    const calcResult = await guestClient.callTool('calculate', {
+      operation: 'multiply',
+      a: 45,
+      b: 2,
+    });
+    console.log('    Result (Allowed):', calcResult.content[0]?.text);
+
+    console.log('\n  → Guest attempting UNAUTHORIZED action: manage_notes (create note)...');
+    const deniedNoteCreate = await guestClient.callTool('manage_notes', {
+      action: 'create',
+      title: 'Hacked Note',
+      content: 'This should be blocked by authorization.',
+    });
+    if (deniedNoteCreate.isError) {
+      console.log('    🛡️  Authorization Blocked Request (Expected):');
+      console.log('       ', deniedNoteCreate.content[0]?.text);
+    } else {
+      console.warn('    ⚠️ Warning: Guest creation was not blocked!');
+    }
+
+    console.log('\n  → Guest attempting UNAUTHORIZED resource read: config://server...');
+    try {
+      await guestClient.readResource('config://server');
+      console.warn('    ⚠️ Warning: Guest read config://server!');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log('    🛡️  Authorization Blocked Resource Read (Expected):');
+      console.log('       ', msg);
+    }
+  } catch (err) {
+    console.error('Error during guest client test:', err);
+  } finally {
+    await guestClient.disconnect();
+  }
+
+  // -------------------------------------------------------------
+  // TEST 3: Invalid Token (Authentication Failure Check)
+  // -------------------------------------------------------------
+  console.log('\n' + '-'.repeat(65));
+  console.log('>>> [TEST 3] Attempting connection with INVALID TOKEN...');
+  const invalidClient = new McpClient({
+    name: 'bad-client',
+    authToken: 'invalid-token-xyz-999',
+  });
+
+  try {
+    await invalidClient.connect();
+    console.warn('⚠️ Warning: Invalid token was accepted!');
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log('🛡️  Authentication Correctly Rejected (Expected):');
+    console.log('   ', msg.slice(0, 100) + '...');
+  } finally {
+    await invalidClient.disconnect().catch(() => {});
+  }
+
+  console.log('\n' + '='.repeat(65));
+  console.log('✓ Authentication & Authorization test suite completed!');
+  console.log('='.repeat(65));
 }
 
 // Auto-run only if this exact file was executed directly

@@ -1,9 +1,10 @@
+import { authorize, type AuthUser } from './auth.js';
 import { getAllNotes, getSystemDiagnostics } from './tools.js';
 
 export const promptDefinitions = [
   {
     name: 'system_diagnostics',
-    description: 'Generates a prompt for an LLM to evaluate server hardware health and memory pressure.',
+    description: 'Generates a prompt for an LLM to evaluate server hardware health and memory pressure. (Requires prompts:system_diagnostics)',
     arguments: [
       {
         name: 'focus',
@@ -14,7 +15,7 @@ export const promptDefinitions = [
   },
   {
     name: 'summarize_notes',
-    description: 'Generates a prompt containing current stored notes and requests an action-item summary.',
+    description: 'Generates a prompt containing current stored notes and requests an action-item summary. (Requires prompts:summarize_notes)',
     arguments: [
       {
         name: 'tone',
@@ -27,7 +28,8 @@ export const promptDefinitions = [
 
 export async function handleGetPrompt(
   name: string,
-  args?: Record<string, string>
+  args?: Record<string, string>,
+  authUser?: AuthUser
 ): Promise<{
   description?: string;
   messages: Array<{
@@ -35,12 +37,19 @@ export async function handleGetPrompt(
     content: { type: 'text'; text: string };
   }>;
 }> {
+  // Authorization check
+  const requiredPermission = `prompts:${name}`;
+  const authz = authorize(authUser, requiredPermission);
+  if (!authz.allowed) {
+    throw new Error(authz.reason || `Forbidden: Access to prompt template '${name}' denied.`);
+  }
+
   switch (name) {
     case 'system_diagnostics': {
       const focus = args?.focus ?? 'general';
       const stats = getSystemDiagnostics();
       return {
-        description: `System diagnostics analysis focusing on ${focus}`,
+        description: `System diagnostics analysis focusing on ${focus} (Requested by: ${authUser?.username})`,
         messages: [
           {
             role: 'user',
@@ -61,7 +70,7 @@ export async function handleGetPrompt(
       const tone = args?.tone ?? 'concise';
       const notes = getAllNotes();
       return {
-        description: `Notes summarization with ${tone} tone`,
+        description: `Notes summarization with ${tone} tone (Requested by: ${authUser?.username})`,
         messages: [
           {
             role: 'user',

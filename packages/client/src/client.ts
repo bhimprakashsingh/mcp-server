@@ -54,9 +54,28 @@ export class McpClient {
       serverPath: this.config.serverPath,
     });
 
+    // Resolve authentication token from config, .env, or default admin key
+    const authToken =
+      this.config.authToken ??
+      process.env.MCP_AUTH_TOKEN ??
+      process.env.MCP_ADMIN_TOKEN ??
+      'admin-token-secret-123';
+
     if (target.transportType === 'http') {
-      console.log(`[mcp-client] Connecting to MCP Server over HTTP SSE: ${target.url}`);
-      const sseTransport = new SSEClientTransport(new URL(target.url));
+      console.log(`[mcp-client] Connecting to MCP Server over HTTP SSE: ${target.url} (Auth: ${authToken ? 'Token provided' : 'None'})`);
+      const sseUrl = new URL(target.url);
+      if (authToken) {
+        sseUrl.searchParams.set('token', authToken);
+      }
+
+      const sseTransport = new SSEClientTransport(sseUrl, {
+        eventSourceInit: (authToken
+          ? { headers: { Authorization: `Bearer ${authToken}` } }
+          : undefined) as any,
+        requestInit: {
+          headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+        },
+      });
       this.transport = sseTransport;
       await this.client.connect(sseTransport);
       this.isConnected = true;
@@ -87,6 +106,9 @@ export class McpClient {
       if (value !== undefined) {
         env[key] = value;
       }
+    }
+    if (authToken) {
+      env.MCP_AUTH_TOKEN = authToken;
     }
     if (this.config.serverEnv) {
       Object.assign(env, this.config.serverEnv);

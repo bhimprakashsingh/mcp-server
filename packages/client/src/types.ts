@@ -12,6 +12,8 @@ export interface McpClientConfig {
   serverCommand?: string;
   /** Arguments to pass to serverCommand */
   serverArgs?: string[];
+  /** Authentication token (Bearer token or API Key) */
+  authToken?: string;
   /** Working directory for server process */
   serverCwd?: string;
   /** Environment variables for server process */

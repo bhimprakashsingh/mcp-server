@@ -7,6 +7,7 @@ export interface HostServerConfig {
   path?: string;
   command?: string;
   args?: string[];
+  authToken?: string;
   cwd?: string;
   env?: Record<string, string>;
 }

@@ -1,5 +1,6 @@
 import os from 'node:os';
 import { z } from 'zod';
+import { authorize, type AuthUser } from './auth.js';
 import type { Note, SystemInfo, WeatherData } from './types.js';
 
 // In-memory store for notes
@@ -41,7 +42,7 @@ export function getAllNotes(): Note[] {
 export const toolDefinitions = [
   {
     name: 'calculate',
-    description: 'Perform mathematical operations including add, subtract, multiply, divide, power, and sqrt.',
+    description: 'Perform mathematical operations including add, subtract, multiply, divide, power, and sqrt. (Permissions: tools:calculate)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -64,20 +65,20 @@ export const toolDefinitions = [
   },
   {
     name: 'get_system_info',
-    description: 'Retrieve real-time host operating system information, CPU count, memory usage, and uptime.',
+    description: 'Retrieve real-time host operating system information and telemetry. (Permissions: tools:get_system_info)',
     inputSchema: {
       type: 'object',
       properties: {
         detailed: {
           type: 'boolean',
-          description: 'Whether to include detailed CPU model information',
+          description: 'Include detailed CPU core models (Requires admin or tools:get_system_info:detailed)',
         },
       },
     },
   },
   {
     name: 'manage_notes',
-    description: 'Create, read, list, or delete notes in the server storage.',
+    description: 'Create, read, list, or delete notes. (Permissions: create/read/list require user/admin; delete requires admin)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -104,7 +105,7 @@ export const toolDefinitions = [
   },
   {
     name: 'weather_report',
-    description: 'Get current weather conditions and forecast for a specified city.',
+    description: 'Get current weather conditions and forecast for a specified city. (Permissions: tools:weather_report)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -146,11 +147,18 @@ const WeatherArgsSchema = z.object({
 
 export async function handleCallTool(
   name: string,
-  args: Record<string, unknown> | undefined
+  args: Record<string, unknown> | undefined,
+  authUser?: AuthUser
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   try {
     switch (name) {
       case 'calculate': {
+        // Authorization check
+        const authz = authorize(authUser, 'tools:calculate');
+        if (!authz.allowed) {
+          return { content: [{ type: 'text', text: authz.reason! }], isError: true };
+        }
+
         const { operation, a, b } = CalculateArgsSchema.parse(args);
         let result: number;
         switch (operation) {
@@ -193,7 +201,28 @@ export async function handleCallTool(
       }
 
       case 'get_system_info': {
+        // Authorization check
+        const authz = authorize(authUser, 'tools:get_system_info');
+        if (!authz.allowed) {
+          return { content: [{ type: 'text', text: authz.reason! }], isError: true };
+        }
+
         const detailed = Boolean(args?.detailed);
+        if (detailed) {
+          const detailAuthz = authorize(authUser, 'tools:get_system_info:detailed');
+          if (!detailAuthz.allowed && authUser?.role !== 'admin') {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `Forbidden: Detailed hardware CPU telemetry requires administrator privileges.`,
+                },
+              ],
+              isError: true,
+            };
+          }
+        }
+
         const sysInfo = getSystemDiagnostics();
         const payload: Record<string, unknown> = { ...sysInfo };
         if (detailed) {
@@ -214,6 +243,22 @@ export async function handleCallTool(
 
       case 'manage_notes': {
         const parsed = NotesArgsSchema.parse(args);
+
+        // Action-specific Authorization checks
+        const actionPermission = `tools:manage_notes:${parsed.action}`;
+        const authz = authorize(authUser, actionPermission);
+        if (!authz.allowed) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: authz.reason || `Forbidden: Action '${parsed.action}' on notes is not permitted for your role.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
         switch (parsed.action) {
           case 'list': {
             const notes = getAllNotes();
@@ -243,7 +288,7 @@ export async function handleCallTool(
               content: [
                 {
                   type: 'text',
-                  text: JSON.stringify({ status: 'created', note: newNote }, null, 2),
+                  text: JSON.stringify({ status: 'created', note: newNote, createdBy: authUser?.username }, null, 2),
                 },
               ],
             };
@@ -269,7 +314,7 @@ export async function handleCallTool(
               content: [
                 {
                   type: 'text',
-                  text: JSON.stringify({ status: 'deleted', id: parsed.id }, null, 2),
+                  text: JSON.stringify({ status: 'deleted', id: parsed.id, deletedBy: authUser?.username }, null, 2),
                 },
               ],
             };
@@ -279,8 +324,12 @@ export async function handleCallTool(
       }
 
       case 'weather_report': {
+        const authz = authorize(authUser, 'tools:weather_report');
+        if (!authz.allowed) {
+          return { content: [{ type: 'text', text: authz.reason! }], isError: true };
+        }
+
         const { city, unit } = WeatherArgsSchema.parse(args);
-        // Deterministic simulation based on city name hash
         let hash = 0;
         for (let i = 0; i < city.length; i++) {
           hash = (hash << 5) - hash + city.charCodeAt(i);
@@ -289,8 +338,8 @@ export async function handleCallTool(
         const absHash = Math.abs(hash);
         const conditions = ['Sunny', 'Partly Cloudy', 'Overcast', 'Light Rain', 'Breezy', 'Clear Skies'];
         const condition = conditions[absHash % conditions.length];
-        let tempC = (absHash % 28) + 5; // between 5°C and 32°C
-        let temp = unit === 'fahrenheit' ? Math.round((tempC * 9) / 5 + 32) : tempC;
+        const tempC = (absHash % 28) + 5;
+        const temp = unit === 'fahrenheit' ? Math.round((tempC * 9) / 5 + 32) : tempC;
 
         const report: WeatherData = {
           city,

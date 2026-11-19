@@ -140,6 +140,17 @@ async function runInteractiveRepl(host: McpHost, agent: HostAgent) {
       return;
     }
 
+    if (input === '/whoami') {
+      const token = process.env.MCP_AUTH_TOKEN || 'admin-token-secret-123';
+      console.log(`\nActive Auth Token: ${token}`);
+      console.log('Role Directory:');
+      console.log('  admin-token-secret-123 -> Admin (Full Access)');
+      console.log('  user-token-secret-456  -> Developer (Standard Access)');
+      console.log('  guest-token-secret-789 -> Guest (Read-Only Access)\n');
+      rl.prompt();
+      return;
+    }
+
     if (input.startsWith('/read ')) {
       const uri = input.slice(6).trim();
       try {
@@ -179,7 +190,10 @@ async function runInteractiveRepl(host: McpHost, agent: HostAgent) {
 }
 
 export async function main() {
-  const host = new McpHost();
+  const tokenArg = process.argv.find((arg) => arg.startsWith('--token='));
+  const explicitToken = tokenArg ? tokenArg.split('=')[1] : undefined;
+
+  const host = new McpHost(explicitToken);
   const agent = new HostAgent(host);
   const isDemo = process.argv.includes('--demo');
 
