@@ -1,0 +1,17 @@
+{
+  "name": "@mcp-project/client",
+  "version": "1.0.0",
+  "description": "MCP Client providing high-level API to connect and interact with MCP servers over HTTP SSE or Stdio",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "start:dist": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "dotenv": "^18.0.10"
+  }
+}

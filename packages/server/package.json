@@ -1,0 +1,23 @@
+{
+  "name": "@mcp-project/server",
+  "version": "1.0.0",
+  "description": "MCP Server exposing tools, resources, and prompts over stdio or HTTP SSE transport",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "mcp-server": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "start:http": "tsx src/index.ts --http",
+    "start:stdio": "tsx src/index.ts --stdio",
+    "start:dist": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "dotenv": "^18.0.10",
+    "zod": "^3.24.2"
+  }
+}

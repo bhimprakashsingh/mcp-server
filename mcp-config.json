@@ -1,0 +1,8 @@
+{
+  "defaultServerPath": "./packages/server/dist/index.js",
+  "defaultServerUrl": "http://localhost:3001/sse",
+  "server": {
+    "port": 3001,
+    "transport": "http"
+  }
+}

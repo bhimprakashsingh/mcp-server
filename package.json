@@ -1,0 +1,31 @@
+{
+  "name": "mcp-project",
+  "version": "1.0.0",
+  "description": "Comprehensive MCP project with Server, Client, and Host implemented in TypeScript",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "node -e \"const fs = require('fs'); ['packages/server/dist', 'packages/client/dist', 'packages/host/dist'].forEach(d => fs.rmSync(d, { recursive: true, force: true }));\"",
+    "start:server": "tsx packages/server/src/index.ts",
+    "start:server:http": "tsx packages/server/src/index.ts --http",
+    "start:server:stdio": "tsx packages/server/src/index.ts --stdio",
+    "start:client": "tsx packages/client/src/index.ts",
+    "start:host": "tsx packages/host/src/index.ts",
+    "demo:host": "tsx packages/host/src/index.ts --demo",
+    "demo:all": "tsx packages/client/src/index.ts && tsx packages/host/src/index.ts --demo"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "zod": "^3.24.2"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.10"
+  }
+}
